@@ -73,7 +73,12 @@ def theme_context(host=True):
 
 async def capture_html(document, *, host=True):
     helper = optional_callable("src.utils.bounded_htmlrender", "render_bounded_local_html", host)
-    kwargs = dict(base_url="https://akinator.local/", wait_ms=0, width=820, height=600,
+    # The host renderer navigates to base_url before set_content. Cards embed
+    # all assets, so an invented origin would turn every card into a DNS/proxy
+    # failure and silently activate the text fallback.
+    # Full-page captures should follow the card's natural height rather than
+    # append blank space up to a fixed 600px viewport.
+    kwargs = dict(base_url="about:blank", wait_ms=0, width=820, height=1,
                   device_scale_factor=1.5, timeout_ms=10000)
     if compatible(helper, document, **kwargs):
         return await helper(document, **kwargs)

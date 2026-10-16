@@ -67,6 +67,19 @@ async def test_recall_failure_is_contained():
     assert receipt.recall.await_count == 1
 
 
+async def test_host_cards_render_local_html_without_navigating_to_a_placeholder_domain(monkeypatch):
+    async def capture(document, **kwargs):
+        # This is the host helper's navigation contract, not a separate preview
+        # renderer that bypasses the optional integration path.
+        assert kwargs['base_url'] == 'about:blank'
+        assert '<main>' in document
+        return b'card-image'
+    helper = AsyncMock(side_effect=capture)
+    monkeypatch.setattr(integration, 'optional_callable', lambda *args: helper)
+    assert await integration.capture_html('<main>Question</main>') == b'card-image'
+    assert helper.await_count == 1
+
+
 def test_plugin_loads_without_private_host_or_image_runtime(tmp_path):
     root = Path(__file__).resolve().parents[1]
     script = '''
@@ -82,6 +95,9 @@ sys.path.insert(0, sys.argv[1])
 plugin = nonebot.load_plugin('nonebot_plugin_akinator')
 assert plugin is not None
 assert plugin.metadata.extra['menu_data'][0]['pmn_group']['key'] == 'games'
+assert plugin.metadata.extra['pmn']['menu_group']['description']
+assert plugin.metadata.extra['pmn']['menu_group'] == plugin.metadata.extra['menu_data'][0]['pmn_group']
+assert isinstance(plugin.metadata.extra['pmn']['sort_order'], int)
 assert plugin.metadata.homepage == 'https://github.com/LoCCai/nonebot-plugin-akinator'
 from nonebot_plugin_akinator.config import config
 assert config.akinator_text_mode
@@ -101,6 +117,11 @@ config.akinator_text_mode = False
 state = GameState(question='兼容性测试')
 output = asyncio.run(message.build_message(state))
 assert '兼容性测试' in str(output) and state.question_number == 1
+async def working_render(*args, **kwargs):
+    return b'card-image'
+render.render_card = working_render
+output = asyncio.run(message.build_message(state))
+assert len(output) == 1 and output[0].type == 'image'
 print('PORTABLE_PLUGIN_LOADED')
 '''
     result = subprocess.run([sys.executable, "-c", script, str(root)], cwd=tmp_path,
