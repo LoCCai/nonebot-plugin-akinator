@@ -3,34 +3,29 @@ name = "nonebot-plugin-akinator"
 dynamic = ["version"]
 description = "Internet Genius - Akinator"
 authors = [{ name = "LgCookie", email = "lgc2333@126.com" }]
+maintainers = [{ name = "LoCCai" }]
 dependencies = [
     "nonebot2>=2.4.3",
     "nonebot-plugin-alconna>=0.59.4",
     "nonebot-plugin-waiter>=0.8.1",
-    "cookit[loguru,nonebot-alconna]>=0.13.0",
-    "fleep>=1.0.1",
-    "cooaki>=0.3.0.post2",
+    "httpx>=0.27,<1",
 ]
 requires-python = ">=3.10,<4.0"
 readme = "README.md"
 license = { text = "MIT" }
 
 [project.urls]
-homepage = "https://github.com/lgc2333/nonebot-plugin-akinator"
+homepage = "https://github.com/LoCCai/nonebot-plugin-akinator"
+repository = "https://github.com/LoCCai/nonebot-plugin-akinator"
+issues = "https://github.com/LoCCai/nonebot-plugin-akinator/issues"
 
 [project.optional-dependencies]
-image = ["nonebot-plugin-htmlrender>=0.6.5", "cookit[jinja,pw]>=0.13.0"]
-patchright = [
-    "nonebot-plugin-htmlrender>=0.6.6",
-    "cooaki[patchright]>=0.3.0.post2",
-]
-all = ["nonebot-plugin-akinator[image,patchright]"]
-
-[project.entry-points.nb_scripts]
-akinator-patch-import = "nonebot_plugin_akinator.cli.patch_import:main"
+image = ["nonebot-plugin-htmlrender>=0.6.5"]
+browser = ["playwright>=1.40"]
+all = ["nonebot-plugin-akinator[image,browser]"]
 
 [dependency-groups]
-dev = []
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
 [build-system]
 requires = ["hatchling"]
@@ -38,3 +33,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 path = "nonebot_plugin_akinator/__init__.py"
+
+[tool.hatch.build.targets.wheel.force-include]
+"THIRD_PARTY_NOTICES.md" = "nonebot_plugin_akinator/THIRD_PARTY_NOTICES.md"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

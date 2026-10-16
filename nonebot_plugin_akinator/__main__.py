@@ -1,186 +1,123 @@
 import asyncio
 import time
-from contextlib import asynccontextmanager
-from enum import Enum, auto
 
-from cooaki import (
-    Answer,
-    BaseAkinator,
-    CanNotGoBackError,
-    GameEndedError,
-    PlaywrightAkinator,
-    WinResp,
-)
-from cooaki.akinator.httpx import HTTPXAkinator
-from cookit import nullcontext
-from cookit.nonebot.alconna import RecallContext
-from httpx import HTTPError
-from nonebot import logger, on_command
-from nonebot.adapters import Event as BaseEvent
+from nonebot import get_driver, logger, on_command
+from nonebot.adapters import Bot, Event, Message
 from nonebot.exception import NoneBotException
-from nonebot.matcher import Matcher
-from nonebot.params import EventPlainText
-from nonebot_plugin_alconna.uniseg import UniMessage
+from nonebot.params import CommandArg
 from nonebot_plugin_waiter import waiter
 
-from nonebot_plugin_akinator.const import HTML_RENDER_AVAILABLE
-
 from .config import config
-from .message import build_answer_msg, build_question_msg
+from .game import GameError, InvalidAction
+from .integration import recall_message, send_message
+from .interaction import parse_action, session_key
+from .message import build_message
+from .runtime import Runtime, start_game
+from .transport import Options
 
-get_new_page = None
-if HTML_RENDER_AVAILABLE:
-    from nonebot_plugin_htmlrender import get_new_page
+HELP = ("网络天才 · 猜人物\n先在心里想好一个人物，再发送 /aki 开局。\n"
+        "答题：1 是、2 否、3 不知道、4 可能是、5 可能不是；也可回复文字。\n"
+        "上一题 / B：撤销上一问；退出 / E：结束本局。\n"
+        "出现猜测后：是 = 猜对了；否 / 继续 = 接着猜。\n"
+        "只有本局发起者能作答；群聊、私聊和不同机器人之间互不影响。")
 
-
-class OtherAction(str, Enum):
-    PREVIOUS = auto()
-    EXIT = auto()
-
-
-ACTION_DICT: dict[Answer | OtherAction, tuple[str, ...]] = {
-    Answer.YES: ("1", "y", "yes", "是", "s", "真", "true"),
-    Answer.NO: ("2", "n", "no", "否", "f", "不是", "bs", "假", "false"),
-    Answer.I_DONT_KNOW: ("3", "i", "idk", "i dont know", "i don't know", "不知道", "bzd", "不清楚", "bqc"),
-    Answer.PROBABLY: ("4", "p", "probably", "或许是", "hxx", "可能是", "kns"),
-    Answer.PROBABLY_NOT: ("5", "pn", "probably not", "或许不是", "hxbs", "可能不是", "knbs"),
-    OtherAction.PREVIOUS: ("b", "back", "prev", "previous", "上一问", "syw", "上一题", "syt", "上一个", "syg"),
-    OtherAction.EXIT: ("e", "exit", "退出", "q", "quit", "tc", "不玩了", "bwl"),
-}  # fmt: skip
-CONTINUE_ACTION = ("c", "continue", "继续")
+runtime = Runtime(config.akinator_max_sessions, config.akinator_request_concurrency,
+                  config.akinator_admission_timeout, config.akinator_session_lifetime)
+get_driver().on_shutdown(runtime.shutdown)
+cmd_aki = on_command("akinator", aliases={"aki", "网络天才", "猜人物"}, priority=5, block=True)
 
 
-active_sessions: set[str] = set()
+async def send(bot, event, content):
+    return await send_message(bot, event, content, host=config.akinator_host_integration)
 
 
-@asynccontextmanager
-async def with_active_session(session_id: str):
-    active_sessions.add(session_id)
-    try:
-        yield
-    except NoneBotException:
-        raise
-    except Exception:
-        logger.exception("Unexpected error during game")
-        await UniMessage.text("出现意外错误，结束游戏").send(at_sender=True)
-    finally:
-        active_sessions.discard(session_id)
-
-
-async def action_waiter_handler(
-    msg: str = EventPlainText(),
-) -> Answer | OtherAction | None:
-    msg = msg.strip().lower()
-    return next((k for k, v in ACTION_DICT.items() if msg in v), None)
-
-
-def make_action_waiter(**kwargs):
-    return waiter(waits=["message"], keep_session=True, **kwargs)(action_waiter_handler)
-
-
-async def continue_waiter_handler(msg: str = EventPlainText()) -> bool | None:
-    return (msg.strip().lower() in CONTINUE_ACTION) or None
-
-
-def make_continue_waiter(**kwargs):
-    return waiter(waits=["message"], keep_session=True, **kwargs)(
-        continue_waiter_handler,
+async def play(bot, event, session, key):
+    options = Options(
+        base_url=config.akinator_base_url_template.format(config.akinator_language),
+        proxy=config.akinator_proxy or config.proxy, timeout=config.akinator_request_timeout,
+        headless=config.akinator_browser_headless, virtual_display=config.akinator_virtual_display,
+        executable_path=config.akinator_browser_executable,
     )
+    await send(bot, event, "先在心里想好一个人物，我来问你……")
+    async with runtime.request():
+        session.game = await start_game(config.akinator_client_type, options,
+                                        child_mode=config.akinator_child_mode, timeout=config.akinator_start_timeout)
+    game = session.game
+    previous = None
+    while not game.state.ended:
+        remaining = session.expires_at - time.monotonic()
+        if remaining <= 0:
+            await send(bot, event, "这局游戏时间较长，已结束。想继续的话，再发送 /aki 开局吧。")
+            return
 
+        # Register the waiter before sending the card so a quick reply is kept.
+        @waiter(waits=["message"], keep_session=True)
+        async def action_waiter(bot: Bot, event: Event):
+            if session_key(bot, event) != key:
+                return None
+            return parse_action(event.get_plaintext(), proposal=game.state.guess is not None)
 
-async def wait_and_handle_action(aki: BaseAkinator, recall: RecallContext) -> bool:
-    """return should end game"""
-
-    wait_time_end = time.time() + config.akinator_operation_timeout
-    while True:
-        action = await make_action_waiter().wait(
-            before=None,
-            timeout=wait_time_end - time.time(),
-        )
-        if action is None:
-            await UniMessage.text("等待超时，退出游戏").send(at_sender=True)
-            return True
-
-        if action is OtherAction.EXIT:
-            await UniMessage.text("已退出游戏").send(at_sender=True)
-            return True
-
+        waiting = asyncio.create_task(action_waiter.wait(timeout=min(config.akinator_operation_timeout, remaining)))
         try:
-            if action is OtherAction.PREVIOUS:
-                resp = await aki.back()
-            else:
-                resp = await aki.answer(action)
-        except HTTPError:
-            logger.exception("Request error occurred")
-            await recall.send("请求失败，请重试", at_sender=True)
+            if previous and config.akinator_recall_previous:
+                await recall_message(bot, previous, host=config.akinator_host_integration)
+            previous = await send(bot, event, await build_message(game.state))
+            action = await waiting
+        finally:
+            if not waiting.done():
+                waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+        if action is None:
+            await send(bot, event, "等待回答超时，本局已结束。发送 /aki 可以重新开始。")
+            return
+        if action == "exit":
+            await send(bot, event, "已退出本局游戏。")
+            return
+        try:
+            async with runtime.request():
+                operation = (game.back() if action == "back" else game.choose() if action == "choose"
+                             else game.exclude() if action == "exclude" else game.answer(action))
+                await asyncio.wait_for(operation, config.akinator_request_timeout + 1)
+        except InvalidAction as exc:
+            await send(bot, event, str(exc))
             continue
-        except CanNotGoBackError:
-            await recall.send("无法返回上一问，请重试", at_sender=True)
-            continue
-        except GameEndedError:
-            await UniMessage.text("我想不出来更多问题了，游戏结束").send(at_sender=True)
-            return True
-
-        if isinstance(resp, WinResp):
-            asyncio.create_task(recall.recall())
-            await (await build_answer_msg(aki, resp)).send(at_sender=True)
-
-            if not (await make_continue_waiter().wait()):
-                return True
-
-            for _ in range(3):
-                try:
-                    await aki.continue_answer()
-                except HTTPError:
-                    logger.exception("Request failed when continuing")
-                    continue
-                break
+        except asyncio.TimeoutError:
+            if action == "choose" and game.state.confirmed:
+                game.state.confirmation_error_type = "TimeoutError"
             else:
-                await UniMessage.text("请求失败，结束游戏").send(at_sender=True)
-
-        return False
-
-
-cmd_aki = on_command("akinator", aliases={"aki"}, block=True)
+                raise
+        if game.state.ended:
+            if game.state.child_blocked:
+                await send(bot, event, "这次猜测的内容不适合展示，本局已结束。换个人物再试试吧。")
+            elif action == "choose":
+                if not game.state.confirmation_recorded:
+                    logger.warning("Akinator 上游统计未确认，本局按玩家确认结束 ({})", game.state.confirmation_error_type)
+                await send(bot, event, f"猜中了！你想的是「{game.state.guess.name}」。下次再来挑战我吧。")
+            else:
+                await send(bot, event, "这次我没猜出来，是你赢啦！发送 /aki 可以再玩一局。")
 
 
 @cmd_aki.handle()
-async def _(m: Matcher, ev: BaseEvent):
-    session_id = ev.get_session_id()
-    if session_id in active_sessions:
-        await m.finish("当前对话有游戏正在进行中，请先退出")
-
-    new_page_ctx = (
-        get_new_page()
-        if config.akinator_client_type == "playwright" and get_new_page
-        else nullcontext()
-    )
-    async with with_active_session(session_id), new_page_ctx as page:
-        aki = (
-            PlaywrightAkinator(
-                page,
-                lang=config.akinator_language,
-                child_mode=config.akinator_child_mode,
-                base_url_template=config.akinator_base_url_template,
-                timeout=config.akinator_request_timeout,
-            )
-            if page
-            else HTTPXAkinator(
-                lang=config.akinator_language,
-                child_mode=config.akinator_child_mode,
-                base_url_template=config.akinator_base_url_template,
-                timeout=config.akinator_request_timeout,
-                proxy=config.proxy,
-            )
-        )
-        try:
-            await aki.start()
-        except Exception:
-            logger.exception("Failed to start game")
-            await m.finish("初始化游戏失败，请检查后台输出")
-
-        while not aki.state.ended:
-            async with RecallContext() as recall:
-                await recall.send(await build_question_msg(aki), at_sender=True)
-                if await wait_and_handle_action(aki, recall):
-                    break
+async def handle_game(bot: Bot, event: Event, args: Message = CommandArg()):
+    argument = args.extract_plain_text().strip().lower()
+    if argument:
+        await send(bot, event, HELP)
+        return
+    try:
+        async with runtime.session(session_key(bot, event)) as session:
+            await play(bot, event, session, session_key(bot, event))
+    except NoneBotException:
+        raise
+    except GameError as exc:
+        await send(bot, event, str(exc))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        # Exception strings from HTTP/browser libraries may contain session URLs.
+        logger.warning("Akinator 本局停止 ({})", type(exc).__name__)
+        # Never repeat an upstream answer or an uncertain outbound delivery.
+        if not runtime.stopping:
+            try:
+                await send(bot, event, "本局请求未能完成，已结束游戏。请稍后发送 /aki 重新开始。")
+            except Exception as delivery_error:
+                logger.warning("Akinator 结束提示未送达 ({})", type(delivery_error).__name__)

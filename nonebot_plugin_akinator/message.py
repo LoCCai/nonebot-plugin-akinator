@@ -1,81 +1,58 @@
-from typing import TYPE_CHECKING
+from __future__ import annotations
 
-from httpx import AsyncClient
+import asyncio
+from urllib.parse import urlsplit
+
+import httpx
 from nonebot import logger
 from nonebot_plugin_alconna.uniseg import UniMessage
 
 from .config import config
 from .const import HTML_RENDER_AVAILABLE
 
-if TYPE_CHECKING:
-    from cooaki import BaseAkinator, WinResp
+
+def state_text(state):
+    if state.guess:
+        guess = state.guess
+        return (f"我猜：{guess.name}\n{guess.description}\n\n"
+                "猜对了回复“是”；猜错了回复“否”或“继续”。\n退出 / E")
+    return (f"第 {state.question_number} 题：{state.question}\n\n"
+            "1. 是 / Y　2. 否 / N　3. 不知道 / IDK\n"
+            "4. 可能是 / P　5. 可能不是 / PN\n"
+            + ("上一题 / B　" if state.answer_depth else "") + "退出 / E")
 
 
-async def get_answer_photo(_: "BaseAkinator", data: "WinResp") -> bytes | None:
-    if not data.photo:
+async def get_photo(guess):
+    if not guess or not guess.photo:
         return None
-    async with AsyncClient() as cli:
-        resp = await cli.get(data.photo)
-        resp.raise_for_status()
-        return resp.content
+    parts = urlsplit(guess.photo)
+    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
+        return None
+    async def download():
+        async with httpx.AsyncClient(proxy=config.akinator_proxy or config.proxy, trust_env=False, timeout=4) as client:
+            async with client.stream("GET", guess.photo) as response:
+                response.raise_for_status()
+                mime = response.headers.get("content-type", "").split(";", 1)[0]
+                if mime not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+                    return None
+                result = bytearray()
+                async for chunk in response.aiter_bytes():
+                    result.extend(chunk)
+                    if len(result) > 2_000_000:
+                        return None
+                return mime, bytes(result)
+    try:
+        return await asyncio.wait_for(download(), 5)
+    except Exception:
+        return None
 
 
-async def build_answer_msg(aki: "BaseAkinator", data: "WinResp") -> UniMessage:
-    msg = UniMessage()
-    msg += f"我猜：\n{data.name_proposition}"
-    if data.description_proposition:
-        msg += f"\n{data.description_proposition}"
-
-    photo = await get_answer_photo(aki, data)
-    if photo:
-        msg += "\n"
-        msg += UniMessage.image(raw=photo)
-        if data.pseudo:
-            msg += f"From: {data.pseudo}"
-
-    msg += "\n猜错了？继续游戏 (C)"
-    return msg
-
-
-async def build_question_msg(aki: "BaseAkinator") -> UniMessage:
-    state = aki.state
-    return UniMessage.text(
-        f"问题 {state.step + 1}：\n"
-        f"{state.question}\n"
-        f"\n"
-        f"1. 是 (Y) | 2. 否 (N) | 3. 不知道 (IDK)\n"
-        f"4. 或许是 (P) | 5. 或许不是 (PN)\n"
-        f"{'' if state.step == 0 else '上一问 (B) | '}退出 (E)",
-    )
-
-
-if not config.akinator_text_mode:
-    if not HTML_RENDER_AVAILABLE:
-        logger.warning(
-            "Required dependencies for rendering images are not installed, "
-            "please install them by `pip install nonebot-plugin-akinator[image]`. "
-            "Fallback to text mode.",
-        )
-
-    else:
-        from .render import render_answer_image, render_question_image
-
-        async def build_answer_msg(aki: "BaseAkinator", data: "WinResp") -> UniMessage:
-            img = await render_answer_image(
-                aki,
-                data.name_proposition,
-                data.description_proposition,
-                await get_answer_photo(aki, data),
-                data.pseudo,
-            )
-            return UniMessage.image(raw=img)
-
-        async def build_question_msg(aki: "BaseAkinator") -> UniMessage:
-            state = aki.state
-            img = await render_question_image(
-                aki,
-                state.akitude,
-                state.step + 1,
-                state.question,
-            )
-            return UniMessage.image(raw=img)
+async def build_message(state):
+    if not config.akinator_text_mode and HTML_RENDER_AVAILABLE:
+        try:
+            from .render import render_card
+            image = await render_card(state, photo=await get_photo(state.guess), host=config.akinator_host_integration)
+            return UniMessage.image(raw=image)
+        except Exception as exc:
+            logger.warning("Akinator 卡片生成失败，改用文字继续本局 ({})", type(exc).__name__)
+    return UniMessage.text(state_text(state))
