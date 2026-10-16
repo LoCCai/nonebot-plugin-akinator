@@ -9,7 +9,7 @@ from .const import HTML_RENDER_AVAILABLE
 if HTML_RENDER_AVAILABLE and not config.akinator_text_mode:
     require("nonebot_plugin_htmlrender")
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 MENU_GROUP = {"key": "games", "name": "互动与游戏",
               "description": "农场、修仙、面包店、抽取和群内互动玩法。", "sort_order": 70}
 __plugin_meta__ = PluginMetadata(

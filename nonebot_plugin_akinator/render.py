@@ -1,11 +1,12 @@
 """Self-contained cards; screenshots never wait for remote fonts or portraits."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import html
 import re
 
-from .const import DATA_AKITUDE_DIR, DATA_ADDITIONAL_CSS_PATH
+from .const import DATA_AKITUDE_DIR, DATA_ADDITIONAL_CSS_PATH, HTML_RENDER_AVAILABLE
 from .integration import capture_html, theme_context
 
 
@@ -52,4 +53,18 @@ def card_html(state, *, photo=None, theme=None):
 
 
 async def render_card(state, *, photo=None, host=True):
-    return await capture_html(card_html(state, photo=photo, theme=theme_context(host)), host=host)
+    theme = theme_context(host)
+    if HTML_RENDER_AVAILABLE:
+        try:
+            return await asyncio.wait_for(
+                capture_html(card_html(state, photo=photo, theme=theme), host=host), 13
+            )
+        except Exception as exc:
+            from nonebot import logger
+
+            # Browser errors may contain session URLs; record only their type.
+            logger.warning("Akinator 浏览器制图失败，改用本地图片卡片 ({})", type(exc).__name__)
+    from .raster import render_png
+
+    # Font loading, image decoding and PNG encoding must not block the bot loop.
+    return await asyncio.to_thread(render_png, state, photo=photo, theme=theme)

@@ -2,7 +2,7 @@
 
 心里想一个人物，回答问题，让网络天才猜猜你想的是谁。
 
-本仓库由 [LoCCai](https://github.com/LoCCai/nonebot-plugin-akinator) 接手维护，基于 LgCookie 的 MIT 插件。当前维护版本为 **1.1.0**，不代表 PyPI 已发布同版本。
+本仓库由 [LoCCai](https://github.com/LoCCai/nonebot-plugin-akinator) 接手维护，基于 LgCookie 的 MIT 插件。当前维护版本为 **1.1.2**，不代表 PyPI 已发布同版本。
 
 ## 安装
 
@@ -73,7 +73,7 @@ AKINATOR_VIRTUAL_DISPLAY=true
 
 菜单通过标准 `PluginMetadata.extra` 提供，归入“互动与游戏”，同时提供 QWeb 功能目录信息。无需依赖菜单插件即可正常玩游戏。
 
-可选检测 `src.utils.message_fx`、`render_theme`、`bounded_htmlrender`、`onebot_recall`。这些模块不会列为安装依赖。发送开始后出现不确定结果时不会换通道重发；可选模块缺失时才选择内置发送。卡片渲染或照片下载失败会退回文字，保持当前题目，不重新提交答案。
+可选检测 `src.utils.message_fx`、`render_theme`、`bounded_htmlrender`、`onebot_recall`。这些模块不会列为安装依赖。发送开始后出现不确定结果时不会换通道重发；可选模块缺失时才选择内置发送。浏览器制图失败或超过 13 秒时，改用 Pillow 本地生成图片卡片，保留昼夜主题、题目、答案和猜测照片；本地制图需要系统已安装 Noto Sans CJK、文泉驿、苹方或微软雅黑。两种制图均不可用时才使用文字，保持当前题目，不重新提交答案。照片下载失败仅省略照片。答题计时在题卡生成后开始。
 
 每局拥有自己的 Cookie、浏览器和显示进程；退出、超时、失败和插件关闭时清理。答题、撤销、继续和确认请求均不自动重试，避免一次回答被提交两次。
 

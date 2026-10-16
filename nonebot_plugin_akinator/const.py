@@ -9,3 +9,4 @@ DATA_AKITUDE_DIR = DATA_DIR / "akitude"
 DATA_ADDITIONAL_CSS_PATH = DATA_DIR / "additional.css"
 
 HTML_RENDER_AVAILABLE = find_spec("nonebot_plugin_htmlrender") is not None
+PILLOW_AVAILABLE = find_spec("PIL") is not None

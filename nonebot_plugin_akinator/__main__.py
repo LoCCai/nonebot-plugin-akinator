@@ -50,7 +50,14 @@ async def play(bot, event, session, key):
             await send(bot, event, "这局游戏时间较长，已结束。想继续的话，再发送 /aki 开局吧。")
             return
 
-        # Register the waiter before sending the card so a quick reply is kept.
+        # Rendering must not consume the player's answer timeout. Register the
+        # waiter after rendering but before delivery, so quick replies are kept.
+        content = await build_message(game.state)
+        remaining = session.expires_at - time.monotonic()
+        if remaining <= 0:
+            await send(bot, event, "这局游戏时间较长，已结束。想继续的话，再发送 /aki 开局吧。")
+            return
+
         @waiter(waits=["message"], keep_session=True)
         async def action_waiter(bot: Bot, event: Event):
             if session_key(bot, event) != key:
@@ -61,7 +68,7 @@ async def play(bot, event, session, key):
         try:
             if previous and config.akinator_recall_previous:
                 await recall_message(bot, previous, host=config.akinator_host_integration)
-            previous = await send(bot, event, await build_message(game.state))
+            previous = await send(bot, event, content)
             action = await waiting
         finally:
             if not waiting.done():

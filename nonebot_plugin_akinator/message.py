@@ -8,7 +8,7 @@ from nonebot import logger
 from nonebot_plugin_alconna.uniseg import UniMessage
 
 from .config import config
-from .const import HTML_RENDER_AVAILABLE
+from .const import HTML_RENDER_AVAILABLE, PILLOW_AVAILABLE
 
 
 def state_text(state):
@@ -48,7 +48,7 @@ async def get_photo(guess):
 
 
 async def build_message(state):
-    if not config.akinator_text_mode and HTML_RENDER_AVAILABLE:
+    if not config.akinator_text_mode and (HTML_RENDER_AVAILABLE or PILLOW_AVAILABLE):
         try:
             from .render import render_card
             image = await render_card(state, photo=await get_photo(state.guess), host=config.akinator_host_integration)

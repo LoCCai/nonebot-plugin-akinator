@@ -122,6 +122,53 @@ async def working_render(*args, **kwargs):
 render.render_card = working_render
 output = asyncio.run(message.build_message(state))
 assert len(output) == 1 and output[0].type == 'image'
+# Explicit text mode remains available even when image dependencies exist.
+config.akinator_text_mode = True
+output = asyncio.run(message.build_message(state))
+assert len(output) == 1 and output[0].type == 'text'
+
+# The real play loop starts the waiter after rendering, before delivery.
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from nonebot_plugin_akinator import __main__ as runner
+import time
+ready = False
+waiting_started = False
+async def delayed_card(state):
+    global ready
+    await asyncio.sleep(0)
+    assert not waiting_started
+    ready = True
+    return 'image-card'
+def fake_waiter(**kwargs):
+    def decorate(callback):
+        async def wait(**kwargs):
+            global waiting_started
+            assert ready
+            waiting_started = True
+            return 'exit'
+        return SimpleNamespace(wait=wait)
+    return decorate
+@asynccontextmanager
+async def request():
+    yield
+game = SimpleNamespace(state=GameState(question='Question'))
+async def start(*args, **kwargs):
+    return game
+async def send(*args):
+    if args[-1] == 'image-card':
+        assert ready
+        await asyncio.sleep(0)
+        assert waiting_started
+    return 'receipt'
+runner.build_message = delayed_card
+runner.waiter = fake_waiter
+runner.start_game = start
+runner.send = send
+runner.runtime = SimpleNamespace(request=request)
+session = SimpleNamespace(game=None, expires_at=time.monotonic() + 1200)
+asyncio.run(runner.play(object(), object(), session, 'key'))
+assert ready and waiting_started
 print('PORTABLE_PLUGIN_LOADED')
 '''
     result = subprocess.run([sys.executable, "-c", script, str(root)], cwd=tmp_path,
