@@ -1,4 +1,7 @@
 """Input semantics shared by all supported chat adapters."""
+import re
+import unicodedata
+
 from .game import Answer
 
 
@@ -15,7 +18,7 @@ CONTINUE = {"c", "continue", "继续"}
 
 
 def parse_action(text, *, proposal=False):
-    text = text.strip().lower()
+    text = unicodedata.normalize("NFKC", text).strip().lower()
     if text in EXIT:
         return "exit"
     if text in BACK:
@@ -25,8 +28,21 @@ def parse_action(text, *, proposal=False):
             return "choose"
         if text in ANSWERS[Answer.NO] | CONTINUE:
             return "exclude"
-        return None
-    return next((answer for answer, words in ANSWERS.items() if text in words), None)
+    else:
+        answer = next((answer for answer, words in ANSWERS.items() if text in words), None)
+        if answer is not None:
+            return answer
+    # Give feedback for attempted answers, without taking over conversation or
+    # other plugins' commands. Numeric input is a choice even outside 1--5.
+    if re.fullmatch(r"[+-]?\d+(?:\.\d+)?|[a-z]", text) or any(text in words for words in ANSWERS.values()):
+        return "invalid"
+    return None
+
+
+def answer_hint(*, proposal=False):
+    if proposal:
+        return "请回复 1 / 是确认猜中，2 / 否 / 继续接着猜；B 返回上一题，E 退出。本次输入未改变游戏。"
+    return "请输入 1—5：1 是、2 否、3 不知道、4 可能是、5 可能不是；也可回复 Y/N/IDK/P/PN。B 返回上一题，E 退出。本次输入未改变游戏。"
 
 
 def session_key(bot, event):

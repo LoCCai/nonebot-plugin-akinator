@@ -19,6 +19,9 @@ class Session:
     task: asyncio.Task
     expires_at: float
     game: Game | None = None
+    stage: str = "starting"
+    action: str = "start"
+    waiting_for_answer: bool = False
 
 
 class Runtime:
