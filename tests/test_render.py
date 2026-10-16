@@ -5,19 +5,26 @@ import threading
 import pytest
 
 from akinator_core_test.game import GameState, Guess
-from akinator_core_test import raster, render
+from akinator_core_test import raster, render, visual
 
 Image = pytest.importorskip("PIL.Image")
 ImageFont = pytest.importorskip("PIL.ImageFont")
 
 
 @pytest.fixture(autouse=True)
-def portable_font(monkeypatch):
+def portable_font(monkeypatch, tmp_path):
     # Layout tests do not depend on a runner having installed Chinese fonts.
     # The production preview separately verifies real CJK glyphs.
-    fonts = {size: ImageFont.load_default(size=size) for size in (17, 18, 19, 21, 22, 32)}
+    fonts = {size: ImageFont.load_default(size=size) for size in (16, 17, 18, 19, 20, 21, 28)}
     monkeypatch.setattr(raster, "font_path", lambda: "unused")
     monkeypatch.setattr(ImageFont, "truetype", lambda path, size: fonts[size])
+    # An official-sized sprite with transparent margins catches the old tiny
+    # watermark layout in both the browser document and timeout image.
+    genie = Image.new('RGBA', (670, 1096))
+    genie.paste((17, 109, 233, 255), (145, 255, 526, 878))
+    for name in ('defi.png', 'confiant.png'):
+        genie.save(tmp_path / name)
+    monkeypatch.setattr(visual, 'DATA_AKITUDE_DIR', tmp_path)
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
@@ -33,12 +40,24 @@ def test_local_cards_are_complete_pngs_in_both_themes(mode, kind):
     result = raster.render_png(state, theme={"palette_mode": mode}, photo=photo)
     with Image.open(BytesIO(result)) as image:
         image.load()
-        assert image.format == "PNG" and image.width == 1230
+        assert image.format == "PNG" and image.width == 1350
         assert 500 < image.height < 2500
         assert image.getpixel((0, 0)) == ((18, 24, 39) if mode == "night" else (241, 237, 249))
+        assert any(color == (17, 109, 233) for count, color in image.crop((60, 150, 540, 1000)).getcolors(500_000))
         if photo:
             assert any(color == (255, 0, 0) for count, color in image.getcolors(image.width * image.height))
     assert state.question_number == 3 and state.answer_depth == 2
+
+
+def test_sprite_transparent_margins_are_cropped_and_html_has_a_visible_genie():
+    state = GameState(question='Question')
+    with Image.open(BytesIO(visual.genie_bytes(state))) as image:
+        assert image.size == (381, 623)
+    document = render.card_html(state)
+    assert 'class="genie"' in document and 'alt="神灯天才"' in document
+    assert 'class="question-bubble"' in document
+    assert document.count('class="option"') == 5
+    assert 'opacity:.08' not in document
 
 
 async def test_stalled_browser_is_cancelled_and_same_question_still_returns_image(monkeypatch):

@@ -24,12 +24,22 @@ def test_incompatible_theme_helper_does_not_break_render(monkeypatch):
     assert integration.theme_context()["theme"] == "day"
 
 
+def test_missing_dedicated_stylesheet_uses_the_shared_theme_family(monkeypatch):
+    def stylesheet(slot):
+        if slot == 'bot/akinator.css':
+            return {'theme_family': 'legacy-202610', 'theme_css': '', 'theme': 'night'}
+        assert slot == 'menu/menu.css'
+        return {'theme_family': 'candy', 'theme_css': ':root{}', 'theme': 'night'}
+    monkeypatch.setattr(integration, 'optional_callable', lambda *args: stylesheet)
+    assert integration.theme_context()['theme_family'] == 'candy'
+
+
 @pytest.mark.parametrize("mode", ["day", "night"])
 def test_cards_escape_player_text_and_have_no_external_requests(mode):
     state = GameState(question='<script>alert("x")</script>')
     document = card_html(state, theme={"palette_mode": mode})
     assert "&lt;script&gt;" in document and '<script>alert' not in document
-    assert "第 1 个问题" in document and "1</b> 是" in document
+    assert "第 1 个问题" in document and "<b>1</b><span>是</span>" in document
     assert 'src="http' not in document and 'url(http' not in document
     assert ('data-theme="dark"' in document) == (mode == "night")
     state.guess = Guess("1", "测试人物", "简介")
@@ -112,6 +122,7 @@ async def no_photo(*args):
     return None
 render.render_card = broken_render
 message.get_photo = no_photo
+message.warm_genie = no_photo
 message.HTML_RENDER_AVAILABLE = True
 config.akinator_text_mode = False
 state = GameState(question='兼容性测试')

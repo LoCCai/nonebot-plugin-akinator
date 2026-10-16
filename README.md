@@ -2,7 +2,7 @@
 
 心里想一个人物，回答问题，让网络天才猜猜你想的是谁。
 
-本仓库由 [LoCCai](https://github.com/LoCCai/nonebot-plugin-akinator) 接手维护，基于 LgCookie 的 MIT 插件。当前维护版本为 **1.1.2**，不代表 PyPI 已发布同版本。
+本仓库由 [LoCCai](https://github.com/LoCCai/nonebot-plugin-akinator) 接手维护，基于 LgCookie 的 MIT 插件。当前维护版本为 **1.1.3**，不代表 PyPI 已发布同版本。
 
 ## 安装
 
@@ -80,6 +80,8 @@ AKINATOR_VIRTUAL_DISPLAY=true
 猜中后的 `/choice` 用于向上游记录结果。玩家回复“是”就正常结束并显示猜中；如果上游记录返回 500 或超时，后台保留未确认状态，不让统计接口故障打断已完成的游戏，也不重复提交。
 
 自定义卡片 CSS 可放在 Bot 工作目录下 `data/akinator/additional.css`；已有 `data/akinator/akitude/*.png` 精灵图可继续使用。截图内容自包含，不等待远程字体或照片加载。
+
+题卡左侧展示放大的神灯人物，右上是问题气泡，下方纵向排列五个回答；猜测卡沿用人物与气泡布局。缺少人物素材时从配置站点下载并缓存在本地。七七部署自动读取主题中心的配色、背景和圆角，跟随七七、晨曦、墨韵、霓虹、素白、糖果与原版主题的日夜切换；浏览器超时后的本地图片使用相同人物布局与主题配色。
 
 ## 开发与验证
 

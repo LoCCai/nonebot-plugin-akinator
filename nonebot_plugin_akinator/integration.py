@@ -65,6 +65,13 @@ def theme_context(host=True):
         try:
             result = helper("bot/akinator.css")
             if isinstance(result, dict):
+                # Hosts without a dedicated Akinator slot still have the shared
+                # menu palette. A missing file otherwise resets every family
+                # to legacy and loses all but its day/night setting.
+                if not result.get("theme_css"):
+                    shared = helper("menu/menu.css")
+                    if isinstance(shared, dict):
+                        return shared
                 return result
         except Exception:
             pass
@@ -78,14 +85,14 @@ async def capture_html(document, *, host=True):
     # failure and silently activate the text fallback.
     # Full-page captures should follow the card's natural height rather than
     # append blank space up to a fixed 600px viewport.
-    kwargs = dict(base_url="about:blank", wait_ms=0, width=820, height=1,
+    kwargs = dict(base_url="about:blank", wait_ms=0, width=900, height=1,
                   device_scale_factor=1.5, timeout_ms=10000)
     if compatible(helper, document, **kwargs):
         return await helper(document, **kwargs)
     from nonebot_plugin_htmlrender import get_new_page
 
     async def capture():
-        async with get_new_page(viewport={"width": 820, "height": 600}, device_scale_factor=1.5) as page:
+        async with get_new_page(viewport={"width": 900, "height": 600}, device_scale_factor=1.5) as page:
             await page.set_content(document, wait_until="domcontentloaded", timeout=10000)
             return await page.locator("main").screenshot(type="png", timeout=10000, animations="disabled")
     return await asyncio.wait_for(capture(), 13)
